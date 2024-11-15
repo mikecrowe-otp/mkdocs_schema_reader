@@ -2,10 +2,15 @@ import os
 import jsonschema2md
 import json
 import logging
+import glob
+import shutil
+import textwrap
 
 from mkdocs.structure.files import File
 from mkdocs.plugins import BasePlugin
 from mkdocs.config import config_options
+
+log = logging.getLogger(f"mkdocs.plugins.{__name__}")
 
 
 class SchemaReader(BasePlugin):
@@ -16,34 +21,45 @@ class SchemaReader(BasePlugin):
         ("output", config_options.Type(str, default="schema")),
         ("nav", config_options.Type(str, default="Schema")),
         ("example_as_yaml", config_options.Type(bool, default=False)),
-        ("show_example", config_options.Type(str, default='all'))
+        ("show_example", config_options.Type(str, default="all")),
     )
 
     def on_files(self, files, config):
+        docs_dir = config["docs_dir"]
+        log.info(f"docs_dir: {docs_dir}")
+        root_dir = os.path.dirname(docs_dir)
+        log.info(f"root_dir: {root_dir}")
+        output_dir = self.config["output"]
+        shutil.rmtree(os.path.join(docs_dir, output_dir), ignore_errors=True)
+
         # Add json files within included files/directories to list
-        locations = []
+        locations = {}
+        schema_list = {}
 
         for entry in self.config["include"]:
+            full_entry = os.path.join(root_dir, entry)
+            section = "/".join(entry.split("/")[1:])
+            if section not in locations:
+                locations[section] = []
+                schema_list[section] = []
             if entry.endswith(".json"):
-                locations.append(entry)
+                locations[section].append(entry)
 
-            elif os.path.isdir(entry):
-                for root, dirs, filenames in os.walk(entry):
-                    for file in filenames:
-                        if file.endswith(".json"):
-                            locations.append(os.path.join(root, file))
-
+            elif os.path.isdir(full_entry):
+                for filepath in glob.glob(os.path.join(full_entry, "*.schema.json")):
+                    locations[section].append(filepath.replace(f"{root_dir}/", ""))
+                for filepath in glob.glob(os.path.join(entry, "*.md")):
+                    locations[section].append(filepath.replace(f"{root_dir}/", ""))
             else:
                 logging.warning(f"Could not locate {entry}")
 
         parser = jsonschema2md.Parser(
             examples_as_yaml=self.config["example_as_yaml"],
-            show_examples=self.config["show_example"]
+            show_examples=self.config["show_example"],
         )
-        schema_list = []
 
         ## Path to Nav ##
-        path=list(filter(None, self.config["nav"].split('/')))
+        path = list(filter(None, self.config["nav"].split("/")))
         path.reverse()
         out_as_string = f"{{'{path.pop(0)}': schema_list}}"
         for item in path:
@@ -51,48 +67,97 @@ class SchemaReader(BasePlugin):
 
         schema_dict = eval(f"{out_as_string}")
 
-        for filepath in locations:
-            file = os.path.basename(filepath)
+        for section in sorted(list(locations.keys())):
+            sec_locations = locations[section]
 
-            with open(filepath) as f:
-                # Check file is a schema file
-                data = f.read()
-                schema_syntax = ["$schema", "$ref"]
+            for filepath in sorted(sec_locations):
+                file = os.path.basename(filepath)
 
-                if any(x in data for x in schema_syntax):
-                    path = f"{config['docs_dir']}/{self.config['output']}/{file[:-5]}.md"
-                    # write converted markdown file to this location
-                    if not os.path.isdir(f"{config['docs_dir']}/{self.config['output']}"):
-                        os.makedirs(f"{config['docs_dir']}/{self.config['output']}", exist_ok=True)
+                with open(os.path.join(root_dir, filepath)) as f:
+                    # Check file is a schema file
+                    data = f.read()
 
-                    try:
+                    dirname = os.path.join(docs_dir, output_dir, section)
+                    final = os.path.join(
+                        output_dir, section, file.replace(".schema.json", ".md")
+                    )
+
+                    if not os.path.isdir(dirname):
+                        os.makedirs(
+                            dirname,
+                            exist_ok=True,
+                        )
+
+                    if filepath.endswith(".md"):
+                        # write converted markdown file to this location
+                        path = os.path.join(docs_dir, final)
                         with open(path, "w") as md:
-                            lines = parser.parse_schema(json.loads(data))
-                            for line in lines:
-                                md.write(line)
-
-                    except Exception:
-                        logging.exception(
-                            f"Exception handling {filepath}\n The file may not be valid Schema, consider excluding it."
+                            md.write(data)
+                        mkdfile = File(
+                            final,
+                            docs_dir,
+                            config["site_dir"],
+                            config["use_directory_urls"],
+                        )
+                        log.info(
+                            f"Added {mkdfile.name} to files for {mkdfile.src_path}"
+                        )
+                        if final in files._src_uris:
+                            files.remove(mkdfile)
+                        files.append(mkdfile)
+                        schema_list[section].append(
+                            {f"{mkdfile.name}": f"{mkdfile.src_path}"}
                         )
                         continue
 
-                    # Add to Files object
-                    mkdfile = File(
-                        f"{self.config['output']}/{file[:-5]}.md",
-                        config['docs_dir'],
-                        config["site_dir"],
-                        config["use_directory_urls"],
-                    )
-                    files.append(mkdfile)
+                    schema_syntax = ["$schema", "$ref"]
 
-                    # Add to schema list
-                    schema_list.append({f"{mkdfile.name}": f"{mkdfile.src_path}"})
+                    if any(x in data for x in schema_syntax):
+                        path = os.path.join(docs_dir, final)
+                        # write converted markdown file to this location
 
-                else:
-                    logging.warning(
-                        f"{filepath} does not seem to be a valid Schema JSON file"
-                    )
+                        try:
+                            with open(path, "w") as md:
+                                lines = parser.parse_schema(json.loads(data), filepath)
+                                header = [
+                                    "<details><summary>Source Code</summary>",
+                                    "",
+                                    "```json",
+                                    json.dumps(json.loads(data), indent=2),
+                                    "```",
+                                    "",
+                                    "</details>",
+                                ]
+                                md.write("\n".join(header))
+                                for line in lines:
+                                    md.write(line)
+
+                        except Exception:
+                            logging.exception(
+                                f"Exception handling {filepath}\n The file may not be valid Schema, consider excluding it."
+                            )
+                            continue
+
+                        # Add to Files object
+                        mkdfile = File(
+                            final,
+                            docs_dir,
+                            config["site_dir"],
+                            config["use_directory_urls"],
+                        )
+                        if final in files._src_uris:
+                            files.remove(mkdfile)
+                        files.append(mkdfile)
+
+                        # Add to schema list
+                        schema_list[section].append(
+                            {f"{mkdfile.name}": f"{mkdfile.src_path}"}
+                        )
+
+                    else:
+                        logging.warning(
+                            f"{filepath} does not seem to be a valid Schema JSON file"
+                        )
 
         # Add schemas to nav
         if self.config["auto_nav"]:
