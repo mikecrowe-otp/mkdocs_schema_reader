@@ -18,7 +18,7 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "mkdocs>=1.0.4",
-        "git+https://github.com/mikecrowe-otp/jsonschema2md.git",
+        "git+https://github.com/mikecrowe-otp/jsonschema2md.git#egg=jsonschema2md",
     ],
     packages=find_packages(),
     entry_points={
