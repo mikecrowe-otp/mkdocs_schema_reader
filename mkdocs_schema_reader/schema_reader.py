@@ -46,7 +46,7 @@ class SchemaReader(BasePlugin):
                 locations[section].append(entry)
 
             elif os.path.isdir(full_entry):
-                for filepath in glob.glob(os.path.join(full_entry, "*.schema.json")):
+                for filepath in glob.glob(os.path.join(full_entry, "*.json")):
                     locations[section].append(filepath.replace(f"{root_dir}/", ""))
                 for filepath in glob.glob(os.path.join(entry, "*.md")):
                     locations[section].append(filepath.replace(f"{root_dir}/", ""))
@@ -79,7 +79,7 @@ class SchemaReader(BasePlugin):
 
                     dirname = os.path.join(docs_dir, output_dir, section)
                     final = os.path.join(
-                        output_dir, section, file.replace(".schema.json", ".md")
+                        output_dir, section, file.replace(".json", ".md")
                     )
 
                     if not os.path.isdir(dirname):
