@@ -16,7 +16,10 @@ setup(
     author_email="tome.robin@gmail.com",
     license="MIT",
     python_requires=">=3.6",
-    install_requires=["mkdocs>=1.0.4", "jsonschema2md>=0.3.0"],
+    install_requires=[
+        "mkdocs>=1.0.4",
+        "git+https://github.com/mikecrowe-otp/jsonschema2md.git",
+    ],
     packages=find_packages(),
     entry_points={
         "mkdocs.plugins": [
